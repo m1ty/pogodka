@@ -1,4 +1,4 @@
-# Weatherka
+# Pogodka
 
 [English version](README.md)
 
@@ -36,7 +36,7 @@
 с открытой прошивкой
 [esp32-photoframe](https://github.com/aitjcize/esp32-photoframe).
 В её настройках укажи *Auto-Rotate URL* =
-`http://<хост-weatherka>:8000/api/frame.png` — рамка будет сама
+`http://<хост-pogodka>:8000/api/frame.png` — рамка будет сама
 перерисовываться при изменении прогноза. Эндпоинт отдаёт ETag, поэтому
 когда погода не поменялась, рамка пропускает цикл обновления и бережёт
 батарею.
@@ -58,7 +58,7 @@
 | `REFRESH_MINUTES` | `20` | период обновления прогноза |
 | `FRAME_LANG` | `ru` | язык кадра: `ru` или `en` (для `en` не забудь `PLACE=Butovo`) |
 
-Переопределяются в `weatherka.service` (секция `Environment=`).
+Переопределяются в `pogodka.service` (секция `Environment=`).
 
 ## Запуск в Docker
 
@@ -78,7 +78,7 @@ docker compose up -d --build
 
 ```sh
 pct create 131 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
-  --hostname weatherka --memory 512 --cores 1 --rootfs local-lvm:4 \
+  --hostname pogodka --memory 512 --cores 1 --rootfs local-lvm:4 \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --start 1
 ```
 

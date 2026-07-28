@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Обновление кода weatherka в LXC-контейнере (запуск на pve).
+# Обновление кода pogodka в LXC-контейнере (запуск на pve).
 # Запуск: ./deploy.sh [CTID]   (по умолчанию 131)
 set -euo pipefail
 
 CT="${1:-131}"
-BASE=/opt/weatherka
+BASE=/opt/pogodka
 
 cd "$(dirname "$0")"
 
@@ -19,9 +19,9 @@ for f in app/*.py; do
 done
 
 echo "== restart =="
-pct exec "$CT" -- systemctl restart weatherka
+pct exec "$CT" -- systemctl restart pogodka
 sleep 2
-pct exec "$CT" -- systemctl is-active weatherka
+pct exec "$CT" -- systemctl is-active pogodka
 
 code=$(pct exec "$CT" -- python3 -c "
 import urllib.request

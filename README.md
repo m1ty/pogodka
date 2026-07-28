@@ -1,4 +1,4 @@
-# Weatherka
+# Pogodka
 
 [Русская версия](README.ru.md)
 
@@ -38,7 +38,7 @@ The photo above is a 7.3" Waveshare Spectra 6 (E6) e-ink photo frame
 ([available on AliExpress](https://aliexpress.ru/item/1005010466222338.html))
 running the open-source
 [esp32-photoframe](https://github.com/aitjcize/esp32-photoframe) firmware.
-Point its *Auto-Rotate URL* at `http://<weatherka-host>:8000/api/frame.png`
+Point its *Auto-Rotate URL* at `http://<pogodka-host>:8000/api/frame.png`
 and it redraws itself as the forecast changes — the endpoint serves an
 ETag, so the frame skips refresh cycles (and saves battery) when the
 weather hasn't changed.
@@ -60,7 +60,7 @@ weather hasn't changed.
 | `REFRESH_MINUTES` | `20` | forecast refresh interval |
 | `FRAME_LANG` | `ru` | card language: `ru` or `en` (set `PLACE=Butovo` for `en`) |
 
-Override them in `weatherka.service` (the `Environment=` line).
+Override them in `pogodka.service` (the `Environment=` line).
 
 ## Running with Docker
 
@@ -81,7 +81,7 @@ Create a container (on the pve host, Debian 12 template):
 
 ```sh
 pct create 131 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
-  --hostname weatherka --memory 512 --cores 1 --rootfs local-lvm:4 \
+  --hostname pogodka --memory 512 --cores 1 --rootfs local-lvm:4 \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --start 1
 ```
 

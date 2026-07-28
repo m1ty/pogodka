@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Первичная настройка weatherka в LXC-контейнере на Proxmox (запуск на pve).
+# Первичная настройка pogodka в LXC-контейнере на Proxmox (запуск на pve).
 # Предполагается свежий Debian 12 CT. Запуск: ./setup.sh [CTID]  (по умолчанию 131)
 set -euo pipefail
 
 CT="${1:-131}"
-BASE=/opt/weatherka
+BASE=/opt/pogodka
 
 cd "$(dirname "$0")"
 
@@ -26,10 +26,10 @@ pct exec "$CT" -- python3 -m venv "$BASE/venv"
 pct exec "$CT" -- "$BASE/venv/bin/pip" install --no-cache-dir -r "$BASE/requirements.txt"
 
 echo "== systemd =="
-pct push "$CT" weatherka.service /etc/systemd/system/weatherka.service
+pct push "$CT" pogodka.service /etc/systemd/system/pogodka.service
 pct exec "$CT" -- systemctl daemon-reload
-pct exec "$CT" -- systemctl enable --now weatherka
+pct exec "$CT" -- systemctl enable --now pogodka
 sleep 2
-pct exec "$CT" -- systemctl is-active weatherka
+pct exec "$CT" -- systemctl is-active pogodka
 
 echo "OK. Кадр: http://<ip-контейнера>:8000/api/frame.png"

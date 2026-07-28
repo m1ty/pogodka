@@ -1,11 +1,11 @@
 [Unit]
-Description=Weatherka - weather frame for e-ink display
+Description=Pogodka - weather frame for e-ink display
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=/opt/weatherka/app
-ExecStart=/opt/weatherka/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/opt/pogodka/app
+ExecStart=/opt/pogodka/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 # координаты/место можно переопределить здесь:

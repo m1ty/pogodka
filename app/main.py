@@ -1,4 +1,4 @@
-"""Weatherka — прогноз погоды для e-ink рамки (самодельный аналог TRMNL).
+"""Pogodka — прогноз погоды для e-ink рамки (самодельный аналог TRMNL).
 
 Тянет прогноз для Бутово (Москва) из Open-Meteo, рендерит 800x480 PNG
 в палитре Spectra 6 и отдаёт его по /api/frame.png с ETag/304 —
@@ -18,7 +18,7 @@ import weather
 from frame import frame_etag, render_frame
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("weatherka")
+log = logging.getLogger("pogodka")
 
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "20"))
 
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Weatherka", lifespan=lifespan)
+app = FastAPI(title="Pogodka", lifespan=lifespan)
 
 
 async def _data() -> dict:
