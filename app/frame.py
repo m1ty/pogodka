@@ -1,9 +1,10 @@
 """Рендер 800x480 карточки погоды для e-ink рамки Spectra 6 (E6).
 
-Макет: шапка с местом и датой; слева — текущая погода крупно, справа —
-прогноз на 4 дня колонками; строка метрик (ветер/влажность/давление/солнце);
-внизу — почасовой график температуры на сутки со столбиками осадков.
-Только чистые палитрные цвета, чтобы прошивка отображала их 1:1 без дизеринга.
+Макет карточный: шапка с местом и датой; крупная панель текущей погоды слева,
+четыре карточки прогноза справа (сегодня выделено); панель метрик с пиктограммами
+(ветер/влажность/давление/восход/закат); внизу почасовой график температуры на
+сутки со столбиками осадков. Только чистые палитрные цвета — прошивка отображает
+их 1:1 без дизеринга.
 """
 from __future__ import annotations
 
@@ -18,7 +19,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from weather import FRAME_LANG, describe
 
 W, H = 800, 480
-RENDER_VERSION = 4   # менять при правках макета — форсирует перерисовку рамки
+RENDER_VERSION = 5   # менять при правках макета — форсирует перерисовку рамки
+MARGIN = 18          # общий внешний отступ карточки
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -95,7 +97,7 @@ def _temp_color(t: float):
     return BLACK
 
 
-# ---------------------------------------------------------------- иконки
+# ---------------------------------------------------------------- иконки погоды
 # Стиль: контурные облака (белая заливка, чёрный контур), жёлтое солнце/луна,
 # синие осадки. Контур получаем, рисуя чёрный силуэт и белый чуть меньше.
 
@@ -200,7 +202,61 @@ def draw_icon(d: ImageDraw.ImageDraw, code: int | None, cx: float, cy: float,
         _cloud(d, cx, cy, s * 0.9)
 
 
-# ---------------------------------------------------------------- блоки макета
+# ---------------------------------------------------------------- пиктограммы метрик
+# Мелкие глифы (~24px) слева от значения в строке метрик.
+
+def _mi_wind(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float):
+    w = max(2, round(s * 0.09))
+    x = cx - s * .5
+    for dy, ln, curl in ((-s * .3, .78, True), (0, .95, False), (s * .3, .62, True)):
+        x1 = x + s * ln
+        d.line([x, cy + dy, x1, cy + dy], fill=BLACK, width=w)
+        if curl:                                   # маленький завиток на конце порыва
+            d.arc([x1 - s * .16, cy + dy - s * .18, x1 + s * .04, cy + dy + s * .18],
+                  -90, 90, fill=BLACK, width=w)
+
+
+def _mi_drop(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float):
+    r = s * .34
+    yb = cy + s * .14
+    d.ellipse([cx - r, yb - r, cx + r, yb + r], fill=BLUE)
+    d.polygon([(cx, cy - s * .5), (cx - r * .95, yb - r * .1),
+               (cx + r * .95, yb - r * .1)], fill=BLUE)
+
+
+def _mi_gauge(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float):
+    r = s * .44
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=BLACK, width=max(2, round(s * .08)))
+    d.line([cx, cy, cx + cos(-pi * .28) * r * .8, cy + sin(-pi * .28) * r * .8],
+           fill=RED, width=max(2, round(s * .08)))
+    d.ellipse([cx - s * .07, cy - s * .07, cx + s * .07, cy + s * .07], fill=BLACK)
+
+
+def _mi_sun_h(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float, up: bool):
+    yh = cy + s * .34                              # линия горизонта
+    d.line([cx - s * .5, yh, cx + s * .5, yh], fill=BLACK, width=max(2, round(s * .08)))
+    r = s * .26                                    # полусолнце над горизонтом
+    d.pieslice([cx - r, yh - r, cx + r, yh + r], 180, 360, fill=YELLOW, outline=BLACK)
+    for k in (-1, 0, 1):                           # пара лучей
+        a = pi * (1.5 + k * .28)
+        d.line([cx + cos(a) * r * 1.35, yh + sin(a) * r * 1.35,
+                cx + cos(a) * r * 1.75, yh + sin(a) * r * 1.75],
+               fill=YELLOW, width=max(2, round(s * .07)))
+    ax = cx + s * .5                               # стрелка вверх/вниз
+    ay = cy - s * .16
+    tip = ay + (s * .34 if not up else -s * .02)
+    base = ay + (s * -.02 if not up else s * .34)
+    d.line([ax, base, ax, tip], fill=BLACK, width=max(2, round(s * .08)))
+    hd = s * .13
+    d.line([ax - hd, tip + (hd if not up else -hd), ax, tip], fill=BLACK, width=max(2, round(s * .08)))
+    d.line([ax + hd, tip + (hd if not up else -hd), ax, tip], fill=BLACK, width=max(2, round(s * .08)))
+
+
+# ---------------------------------------------------------------- примитивы макета
+
+def _panel(d: ImageDraw.ImageDraw, box, radius=16, width=1, outline=BLACK, fill=None):
+    d.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
 
 def _fit_font(d: ImageDraw.ImageDraw, text: str, max_w: float,
               size: int, bold=True, min_size=10) -> ImageFont.FreeTypeFont:
@@ -211,20 +267,98 @@ def _fit_font(d: ImageDraw.ImageDraw, text: str, max_w: float,
     return _font(size, bold)
 
 
-def _metric_row(d: ImageDraw.ImageDraw, cx: float, y: int, parts,
-                size=20, max_w=W - 48.0):
-    """Строка из чередующихся сегментов (текст, цвет, жирность), по центру.
-    Размер шрифта ужимается, пока строка не влезет в max_w."""
-    while size > 10:
-        fonts = {b: _font(size, b) for b in (True, False)}
-        total = sum(d.textlength(t, font=fonts[b]) for t, _c, b in parts)
-        if total <= max_w:
-            break
-        size -= 1
-    x = cx - total / 2
-    for t, color, b in parts:
-        d.text((x, y), t, font=fonts[b], fill=color)
-        x += d.textlength(t, font=fonts[b])
+def _label_bg(d: ImageDraw.ImageDraw, x: float, y: float, text: str, font,
+              color, anchor="mm", pad=3):
+    """Подпись с белой подложкой — читается поверх столбиков и кривой."""
+    l, t, r, b = d.textbbox((x, y), text, font=font, anchor=anchor)
+    d.rectangle([l - pad, t - 1, r + pad, b + 1], fill=WHITE)
+    d.text((x, y), text, font=font, fill=color, anchor=anchor)
+
+
+# ---------------------------------------------------------------- блоки макета
+
+def _hero(d: ImageDraw.ImageDraw, cur: dict, box):
+    """Крупная панель текущей погоды: иконка, температура, описание, «ощущается»."""
+    x0, y0, x1, y1 = box
+    _panel(d, box, radius=18, width=2)
+    inner_r = x1 - 16
+    draw_icon(d, cur["code"], x0 + 84, y0 + 78, 108, cur["is_day"])
+    t_str = _fmt_temp(cur["temp"])
+    tx = x0 + 168
+    d.text((tx, y0 + 78), t_str,
+           font=_fit_font(d, t_str, inner_r - tx, 84), fill=_temp_color(cur["temp"]),
+           anchor="lm")
+    desc = describe(cur["code"])
+    d.text((x0 + 22, y0 + 138), desc,
+           font=_fit_font(d, desc, x1 - x0 - 44, 30, bold=False), fill=BLACK)
+    feels = f"{L['feels']} {_fmt_temp(cur['feels'])}"
+    d.text((x0 + 22, y0 + 176), feels, font=_font(22, False), fill=BLACK)
+
+
+def _forecast_card(d: ImageDraw.ImageDraw, day: dict, box, label: str, is_today: bool):
+    x0, y0, x1, y1 = box
+    cx = (x0 + x1) / 2
+    _panel(d, box, radius=14, width=2 if is_today else 1)
+
+    # шапка карточки: у «сегодня» — зелёная плашка с белым текстом
+    band_b = y0 + 30
+    if is_today:
+        d.rounded_rectangle([x0, y0, x1, band_b + 8], radius=14, fill=GREEN)
+        d.rectangle([x0, band_b - 6, x1, band_b + 8], fill=GREEN)
+        lab_color = WHITE
+    else:
+        d.line([x0 + 8, band_b, x1 - 8, band_b], fill=BLACK, width=1)
+        lab_color = BLACK
+    d.text((cx, y0 + 15), label, font=_fit_font(d, label, x1 - x0 - 12, 20),
+           fill=lab_color, anchor="mm")
+
+    draw_icon(d, day["code"], cx, y0 + 74, 56)
+    d.text((cx, y0 + 112), _fmt_temp(day["tmax"]), font=_font(28),
+           fill=_temp_color(day["tmax"]), anchor="ma")
+    d.text((cx, y0 + 146), _fmt_temp(day["tmin"]), font=_font(22), fill=BLUE, anchor="ma")
+
+    prob = day["precip_prob"] or 0
+    precip = f"{prob:.0f}%"
+    if (day["precip_mm"] or 0) >= 0.1:
+        precip += f" · {day['precip_mm']:.1f}"
+    d.text((cx, y0 + 178), precip,
+           font=_fit_font(d, precip, x1 - x0 - 8, 17, bold=False),
+           fill=BLUE if prob else BLACK, anchor="ma")
+
+
+def _metrics(d: ImageDraw.ImageDraw, cur: dict, sr: str, ss: str, box):
+    """Панель метрик: пиктограмма + значение, пять ячеек через тонкие разделители."""
+    x0, y0, x1, y1 = box
+    _panel(d, box, radius=12, width=1)
+    cy = (y0 + y1) / 2
+    inner = x1 - x0
+    cells = [
+        ("wind", f"{cur['wind_ms']:.0f} {L['ms']} {cur['wind_dir']}".strip()),
+        ("drop", f"{cur['humidity']:.0f}%"),
+        ("gauge", f"{cur['pressure_mmhg']} {L['mm']}"),
+        ("up", sr),
+        ("down", ss),
+    ]
+    for k in range(1, 5):                          # тонкие вертикальные разделители
+        x = x0 + inner * k / 5
+        d.line([x, y0 + 10, x, y1 - 10], fill=BLACK, width=1)
+
+    isz, gap = 24, 8
+    for i, (kind, val) in enumerate(cells):
+        f = _fit_font(d, val, inner / 5 - isz - gap - 8, 19)
+        tw = d.textlength(val, font=f)
+        total = isz + gap + tw
+        cellcx = x0 + inner * (i + 0.5) / 5
+        gx = cellcx - total / 2 + isz / 2
+        if kind == "wind":
+            _mi_wind(d, gx, cy, isz)
+        elif kind == "drop":
+            _mi_drop(d, gx, cy, isz)
+        elif kind == "gauge":
+            _mi_gauge(d, gx, cy, isz)
+        else:
+            _mi_sun_h(d, gx, cy, isz, up=(kind == "up"))
+        d.text((gx + isz / 2 + gap, cy), val, font=f, fill=BLACK, anchor="lm")
 
 
 def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
@@ -249,7 +383,8 @@ def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
             continue
         bx = x0 + (x1 - x0) * i / (n - 1)
         bh = (y1 - y0) * 0.5 * h["prob"] / 100
-        d.rectangle([bx - bar_w / 2, y1 - bh, bx + bar_w / 2, y1], fill=BLUE)
+        d.rounded_rectangle([bx - bar_w / 2, y1 - bh, bx + bar_w / 2, y1],
+                            radius=max(1, round(bar_w / 3)), fill=BLUE)
 
     # ось часов: подписи каждые 3 часа, пунктир и день недели на полуночи
     for i, h in enumerate(hourly[:-1]):
@@ -258,18 +393,19 @@ def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
         if dt.hour == 0:
             for yy in range(y0 - 4, y1, 7):
                 d.line([bx, yy, bx, yy + 3], fill=BLACK, width=1)
-            d.text((bx + 5, y0 - 6), WEEKDAYS[dt.weekday()],
-                   font=_font(16), fill=BLACK)
+            _label_bg(d, bx + 4, y0 - 4, WEEKDAYS[dt.weekday()], _font(16),
+                      BLACK, anchor="lm", pad=2)
         if dt.hour % 3 == 0:
             d.text((bx, y1 + 8), f"{dt.hour:02d}",
                    font=_font(15, False), fill=BLACK, anchor="ma")
 
-    d.line([x0, y1, x1, y1], fill=BLACK, width=1)
+    d.line([x0, y1, x1, y1], fill=BLACK, width=2)
 
     # кривая температуры
     pts = [xy(i, t) for i, t in enumerate(temps)]
     d.line(pts, fill=BLACK, width=3, joint="curve")
-    d.ellipse([pts[0][0] - 4, pts[0][1] - 4, pts[0][0] + 4, pts[0][1] + 4], fill=BLACK)
+    d.ellipse([pts[0][0] - 5, pts[0][1] - 5, pts[0][0] + 5, pts[0][1] + 5],
+              fill=BLACK, outline=WHITE, width=2)
 
     # подписи экстремумов: макс над точкой, мин под точкой; у краёв диапазона
     # переворачиваем, чтобы не налезать на подписи часов и строку метрик
@@ -278,9 +414,8 @@ def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
         x, y = pts[idx]
         x = min(max(x, x0 + 22), x1 - 22)
         above = prefer_above if (y0 + 22 < y < y1 - 26) else y > y1 - 26
-        d.text((x, y + (-7 if above else 7)), _fmt_temp(temps[idx]),
-               font=_font(18), fill=_temp_color(temps[idx]),
-               anchor="mb" if above else "ma")
+        _label_bg(d, x, y + (-11 if above else 11), _fmt_temp(temps[idx]),
+                  _font(18), _temp_color(temps[idx]), anchor="mb" if above else "ma")
 
 
 # ---------------------------------------------------------------- кадр
@@ -292,62 +427,35 @@ def render_frame(data: dict) -> bytes:
     upd = datetime.fromisoformat(data["updated"])
 
     # ── шапка ──
-    d.text((24, 18), data["place"], font=_font(34), fill=BLACK)
+    d.text((MARGIN + 4, 12), data["place"], font=_font(36), fill=BLACK)
     date_s = L["date"].format(wd=WEEKDAYS[upd.weekday()], day=upd.day,
                               month=L["months"][upd.month - 1])
-    d.text((W - 24, 26), date_s, font=_font(24, False), fill=BLACK, anchor="ra")
-    d.line([24, 66, W - 24, 66], fill=BLACK, width=2)
+    d.text((W - MARGIN - 4, 26), date_s, font=_font(24, False), fill=BLACK, anchor="ra")
 
-    # ── слева: сейчас ──
-    draw_icon(d, cur["code"], 95, 152, 115, cur["is_day"])
-    t_str = _fmt_temp(cur["temp"])
-    d.text((175, 96), t_str, font=_fit_font(d, t_str, 372 - 175, 84),
-           fill=_temp_color(cur["temp"]))
-    desc = describe(cur["code"])
-    d.text((36, 226), desc, font=_fit_font(d, desc, 340, 28, bold=False), fill=BLACK)
-    d.text((36, 264), f"{L['feels']} {_fmt_temp(cur['feels'])}",
-           font=_font(22, False), fill=BLACK)
+    # ── ряд: панель «сейчас» + карточки прогноза ──
+    row_y0, row_y1 = 70, 286
+    hero_x1 = MARGIN + 348
+    _hero(d, cur, (MARGIN, row_y0, hero_x1, row_y1))
 
-    # ── справа: прогноз на 4 дня ──
-    x0, x1 = 392, W - 16
-    cw = (x1 - x0) / 4
-    d.line([382, 84, 382, 288], fill=BLACK, width=1)
+    fx0, fx1 = hero_x1 + 12, W - MARGIN
+    gap = 8
+    cw = (fx1 - fx0 - gap * 3) / 4
     today = upd.date()
     for i, day in enumerate(daily[:4]):
-        cx = x0 + cw * i + cw / 2
-        if i:                                     # разделители колонок
-            d.line([x0 + cw * i, 96, x0 + cw * i, 280], fill=BLACK, width=1)
+        cardx0 = fx0 + i * (cw + gap)
         dt = datetime.fromisoformat(day["date"]).date()
-        label = (L["today"] if dt == today else
+        is_today = dt == today
+        label = (L["today"] if is_today else
                  L["tomorrow"] if (dt - today).days == 1 else WEEKDAYS[dt.weekday()])
-        d.text((cx, 88), label, font=_fit_font(d, label, cw - 10, 20),
-               fill=BLACK, anchor="ma")
-        draw_icon(d, day["code"], cx, 152, 74)
-        d.text((cx, 200), _fmt_temp(day["tmax"]), font=_font(30),
-               fill=_temp_color(day["tmax"]), anchor="ma")
-        d.text((cx, 238), _fmt_temp(day["tmin"]), font=_font(24), fill=BLUE, anchor="ma")
-        precip = f"{day['precip_prob'] or 0:.0f}%"
-        if (day["precip_mm"] or 0) >= 0.1:
-            precip += f" · {day['precip_mm']:.1f}"
-        d.text((cx, 270), precip, font=_font(18, False), fill=BLUE, anchor="ma")
+        _forecast_card(d, day, (cardx0, row_y0, cardx0 + cw, row_y1), label, is_today)
 
-    # ── строка метрик ──
-    d.line([24, 302, W - 24, 302], fill=BLACK, width=1)
+    # ── панель метрик ──
     sr = datetime.fromisoformat(daily[0]["sunrise"]).strftime("%H:%M")
     ss = datetime.fromisoformat(daily[0]["sunset"]).strftime("%H:%M")
-    dot = ("  ·  ", BLACK, False)
-    _metric_row(d, W / 2, 314, [
-        (L["wind"], BLACK, False),
-        (f"{cur['wind_ms']:.0f} {L['ms']} {cur['wind_dir']}", BLUE, True),
-        dot, (L["humidity"], BLACK, False), (f"{cur['humidity']:.0f}%", BLUE, True),
-        dot, (L["pressure"], BLACK, False),
-        (f"{cur['pressure_mmhg']} {L['mm']}", BLUE, True),
-        dot, (L["sunrise"], BLACK, False), (sr, BLACK, True),
-        dot, (L["sunset"], BLACK, False), (ss, BLACK, True),
-    ], size=18)
+    _metrics(d, cur, sr, ss, (MARGIN, 298, W - MARGIN, 346))
 
     # ── низ: почасовой график ──
-    _draw_chart(d, data.get("hourly") or [], 44, W - 44, 366, 438)
+    _draw_chart(d, data.get("hourly") or [], 44, W - 44, 372, 442)
 
     buf = io.BytesIO()
     img.save(buf, "PNG")
