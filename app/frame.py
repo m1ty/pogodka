@@ -233,23 +233,18 @@ def _mi_gauge(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float):
 
 
 def _mi_sun_h(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float, up: bool):
-    yh = cy + s * .34                              # линия горизонта
-    d.line([cx - s * .5, yh, cx + s * .5, yh], fill=BLACK, width=max(2, round(s * .08)))
-    r = s * .26                                    # полусолнце над горизонтом
-    d.pieslice([cx - r, yh - r, cx + r, yh + r], 180, 360, fill=YELLOW, outline=BLACK)
-    for k in (-1, 0, 1):                           # пара лучей
-        a = pi * (1.5 + k * .28)
-        d.line([cx + cos(a) * r * 1.35, yh + sin(a) * r * 1.35,
-                cx + cos(a) * r * 1.75, yh + sin(a) * r * 1.75],
-               fill=YELLOW, width=max(2, round(s * .07)))
-    ax = cx + s * .5                               # стрелка вверх/вниз
-    ay = cy - s * .16
-    tip = ay + (s * .34 if not up else -s * .02)
-    base = ay + (s * -.02 if not up else s * .34)
-    d.line([ax, base, ax, tip], fill=BLACK, width=max(2, round(s * .08)))
-    hd = s * .13
-    d.line([ax - hd, tip + (hd if not up else -hd), ax, tip], fill=BLACK, width=max(2, round(s * .08)))
-    d.line([ax + hd, tip + (hd if not up else -hd), ax, tip], fill=BLACK, width=max(2, round(s * .08)))
+    """Солнце на горизонте: восход — встаёт над линией, закат — уходит под неё."""
+    r = s * .3
+    yh = cy + (s * .28 if up else -s * .05)         # линия горизонта
+    top = cy - r * (0.2 if up else 1.0)
+    bot = cy + r * (1.0 if up else 0.2)
+    d.ellipse([cx - r, top, cx + r, bot], fill=YELLOW, outline=BLACK, width=2)
+    for k in (-1, 0, 1):                            # лучи: вверх на восходе, вниз на закате
+        a = pi * (1.5 + k * .3) if up else pi * (0.5 + k * .3)
+        d.line([cx + cos(a) * r * 1.25, cy + sin(a) * r * 1.25,
+                cx + cos(a) * r * 1.7, cy + sin(a) * r * 1.7],
+               fill=YELLOW, width=max(2, round(s * .08)))
+    d.line([cx - s * .6, yh, cx + s * .6, yh], fill=BLACK, width=max(2, round(s * .1)))
 
 
 # ---------------------------------------------------------------- примитивы макета
