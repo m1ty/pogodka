@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest==8.*
+tzdata          # база часовых поясов для ZoneInfo там, где нет системной (Windows)

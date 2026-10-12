@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -21,9 +22,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("pogodka")
 
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "20"))
+RETRY_SECONDS = 60               # ленивые повторы при пустом кэше — не чаще
+WAIT_SECONDS = 5                 # сколько запрос ждёт свежих данных, потом 503
 
 _cache: dict | None = None       # последние удачно полученные данные
-_lock = asyncio.Lock()
+_inflight: asyncio.Task | None = None
+_last_attempt = 0.0
 
 
 async def _refresh() -> bool:
@@ -34,11 +38,23 @@ async def _refresh() -> bool:
     except Exception as e:
         log.warning("weather fetch failed: %s", e)
         return False
-    async with _lock:
-        _cache = data
+    _cache = data
     log.info("weather updated: %s, %s°C",
              data["updated"], data["current"]["temp"])
     return True
+
+
+def _kick_refresh() -> asyncio.Task | None:
+    """Одна попытка в полёте и не чаще RETRY_SECONDS: без сети каждый опрос
+    рамки иначе делал свой 20-секундный запрос к Open-Meteo."""
+    global _inflight, _last_attempt
+    if _inflight is not None and not _inflight.done():
+        return _inflight
+    if time.monotonic() - _last_attempt < RETRY_SECONDS:
+        return None
+    _last_attempt = time.monotonic()
+    _inflight = asyncio.create_task(_refresh())
+    return _inflight
 
 
 async def _refresh_loop():
@@ -49,7 +65,9 @@ async def _refresh_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _refresh()             # первая загрузка сразу на старте
+    # первая загрузка — в фоне: сервис сразу отвечает (healthz при деплое),
+    # а не висит до таймаута Open-Meteo без сети
+    _kick_refresh()
     task = asyncio.create_task(_refresh_loop())
     yield
     task.cancel()
@@ -59,8 +77,13 @@ app = FastAPI(title="Pogodka", lifespan=lifespan)
 
 
 async def _data() -> dict:
-    if _cache is None:           # старт без сети — пробуем ещё раз лениво
-        await _refresh()
+    if _cache is None:           # старт без сети — ждём фоновую попытку недолго
+        task = _kick_refresh()
+        if task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), WAIT_SECONDS)
+            except asyncio.TimeoutError:
+                pass
     if _cache is None:
         raise HTTPException(503, "weather data not available yet")
     return _cache

@@ -79,16 +79,28 @@ def wind_dir(deg: float | None) -> str:
 
 
 def describe(code: int | None) -> str:
-    return DESCRIPTIONS[FRAME_LANG].get(code or 0, "—")
+    # None — нет данных, а не «ясно» (код 0)
+    return "—" if code is None else DESCRIPTIONS[FRAME_LANG].get(code, "—")
+
+
+def _need(value, what: str):
+    """Обязательное поле: null от Open-Meteo не должен попасть в кэш —
+    иначе кадр падает до следующего обновления, хотя прошлые данные были."""
+    if value is None:
+        raise ValueError(f"Open-Meteo: нет значения {what}")
+    return value
 
 
 async def fetch() -> dict:
-    """Возвращает нормализованный словарь; бросает исключение при сбое сети."""
+    """Возвращает нормализованный словарь; бросает исключение при сбое сети
+    или неполном ответе — тогда в кэше остаются прежние данные."""
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.get(API, params=PARAMS)
         r.raise_for_status()
-        raw = r.json()
+        return normalize(r.json())
 
+
+def normalize(raw: dict) -> dict:
     cur, day, hour = raw["current"], raw["daily"], raw["hourly"]
 
     # почасовой срез: от текущего часа на сутки вперёд
@@ -96,6 +108,8 @@ async def fetch() -> dict:
     hourly = []
     for i, t in enumerate(hour["time"]):
         if datetime.fromisoformat(t) < now_h:
+            continue
+        if hour["temperature_2m"][i] is None:      # дыра в ряду — точку пропускаем
             continue
         hourly.append({
             "time": t,
@@ -108,29 +122,35 @@ async def fetch() -> dict:
 
     daily = []
     for i, date in enumerate(day["time"]):
+        shown = i < 4                              # эти дни рисуются на карточках
         daily.append({
             "date": date,
             "code": day["weather_code"][i],
-            "tmax": day["temperature_2m_max"][i],
-            "tmin": day["temperature_2m_min"][i],
+            "tmax": _need(day["temperature_2m_max"][i], f"tmax {date}") if shown
+                    else day["temperature_2m_max"][i],
+            "tmin": _need(day["temperature_2m_min"][i], f"tmin {date}") if shown
+                    else day["temperature_2m_min"][i],
             "precip_mm": day["precipitation_sum"][i],
             "precip_prob": day["precipitation_probability_max"][i],
-            "sunrise": day["sunrise"][i],
-            "sunset": day["sunset"][i],
+            "sunrise": _need(day["sunrise"][i], "sunrise") if i == 0 else day["sunrise"][i],
+            "sunset": _need(day["sunset"][i], "sunset") if i == 0 else day["sunset"][i],
         })
+    if not daily:
+        raise ValueError("Open-Meteo: пустой дневной прогноз")
 
     return {
         "place": PLACE,
         "updated": datetime.now(ZoneInfo(TZ)).isoformat(timespec="minutes"),
         "current": {
-            "temp": cur["temperature_2m"],
-            "feels": cur["apparent_temperature"],
-            "humidity": cur["relative_humidity_2m"],
+            "temp": _need(cur["temperature_2m"], "temperature_2m"),
+            "feels": _need(cur["apparent_temperature"], "apparent_temperature"),
+            "humidity": _need(cur["relative_humidity_2m"], "relative_humidity_2m"),
             "code": cur["weather_code"],
-            "wind_ms": cur["wind_speed_10m"],
+            "wind_ms": _need(cur["wind_speed_10m"], "wind_speed_10m"),
             "wind_dir": wind_dir(cur.get("wind_direction_10m")),
             # станционное давление в мм рт. ст. — привычная величина
-            "pressure_mmhg": round(cur["surface_pressure"] * 0.750062),
+            "pressure_mmhg": round(_need(cur["surface_pressure"], "surface_pressure")
+                                   * 0.750062),
             "is_day": bool(cur.get("is_day", 1)),
         },
         "daily": daily,

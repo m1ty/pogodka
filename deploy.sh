@@ -18,13 +18,32 @@ for f in app/*.py; do
     echo "  $f"
 done
 
+echo "== зависимости =="
+# requirements.txt тоже едет в контейнер: иначе новая/обновлённая библиотека
+# не встанет в venv и сервис упадёт на импорте после рестарта
+local_sum=$(md5sum requirements.txt | cut -d' ' -f1)
+remote_sum=$(pct exec "$CT" -- md5sum "$BASE/requirements.txt" 2>/dev/null | cut -d' ' -f1 || true)
+if [ "$local_sum" != "$remote_sum" ]; then
+    pct push "$CT" requirements.txt "$BASE/requirements.txt"
+    pct exec "$CT" -- "$BASE/venv/bin/pip" install -q -r "$BASE/requirements.txt"
+    echo "  список обновлён, зависимости доустановлены"
+else
+    echo "  без изменений"
+fi
+
 echo "== restart =="
 pct exec "$CT" -- systemctl restart pogodka
-sleep 2
-pct exec "$CT" -- systemctl is-active pogodka
 
-code=$(pct exec "$CT" -- python3 -c "
+# сервис поднимается за пару секунд — ждём ответа до ~15 с, а не одну попытку
+code=FAIL
+for _ in $(seq 1 15); do
+    sleep 1
+    code=$(pct exec "$CT" -- python3 -c "
 import urllib.request
-print(urllib.request.urlopen('http://localhost:8000/healthz').status)" 2>/dev/null || echo FAIL)
+print(urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status)" 2>/dev/null) \
+        && break || code=FAIL
+done
+pct exec "$CT" -- systemctl is-active pogodka
 echo "  API отвечает: $code"
+[ "$code" = "200" ] || { echo "ОШИБКА: healthz не ответил" >&2; exit 1; }
 echo "OK."

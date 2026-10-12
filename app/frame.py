@@ -11,16 +11,20 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from datetime import datetime
-from math import cos, pi, sin
+import os
+from datetime import datetime, timedelta
+from math import cos, floor, pi, sin
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from weather import FRAME_LANG, describe
 
 W, H = 800, 480
-RENDER_VERSION = 5   # менять при правках макета — форсирует перерисовку рамки
+RENDER_VERSION = 6   # менять при правках макета — форсирует перерисовку рамки
 MARGIN = 18          # общий внешний отступ карточки
+
+# данные старше этого — сеть/Open-Meteo недоступны: помечаем кадр
+STALE_AFTER = timedelta(minutes=max(60, 2 * int(os.environ.get("REFRESH_MINUTES", "20"))))
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -67,7 +71,7 @@ _L10N = {
         "today": "сегодня", "tomorrow": "завтра",
         "feels": "ощущается", "wind": "ветер ", "humidity": "влажность ",
         "pressure": "давление ", "sunrise": "восход ", "sunset": "закат ",
-        "ms": "м/с", "mm": "мм",
+        "ms": "м/с", "mm": "мм", "stale": "данные от {}",
     },
     "en": {
         "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -77,22 +81,30 @@ _L10N = {
         "today": "today", "tomorrow": "tomorrow",
         "feels": "feels like", "wind": "wind ", "humidity": "humidity ",
         "pressure": "pressure ", "sunrise": "sunrise ", "sunset": "sunset ",
-        "ms": "m/s", "mm": "mmHg",
+        "ms": "m/s", "mm": "mmHg", "stale": "data from {}",
     },
 }
 L = _L10N[FRAME_LANG]
 WEEKDAYS = L["weekdays"]
 
 
+def _rnd(t: float) -> int:
+    """Половина — вверх (24.5 → 25), как в прогнозах. Встроенный round()
+    банковский: 24.5 → 24, 2.5 → 2."""
+    return floor(t + 0.5)
+
+
 def _fmt_temp(t: float) -> str:
-    v = round(t)
+    v = _rnd(t)
     return f"{v:+d}°" if v else "0°"
 
 
 def _temp_color(t: float):
-    if t >= 25:
+    # по тому же целому, что напечатано: «+25°» всегда красное, «0°» — синее
+    v = _rnd(t)
+    if v >= 25:
         return RED
-    if t <= 0:
+    if v <= 0:
         return BLUE
     return BLACK
 
@@ -174,7 +186,7 @@ def _fog(d: ImageDraw.ImageDraw, cx: float, cy: float, s: float):
 def draw_icon(d: ImageDraw.ImageDraw, code: int | None, cx: float, cy: float,
               s: float, is_day: bool = True):
     """code — WMO weather code, s — размер иконки, is_day — солнце или луна."""
-    c = code or 0
+    c = -1 if code is None else code    # нет данных → нейтральное облако, не солнце
     lum = _sun if is_day else _moon
     if c == 0:
         lum(d, cx, cy, s * 0.3)
@@ -405,7 +417,10 @@ def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
     # подписи экстремумов: макс над точкой, мин под точкой; у краёв диапазона
     # переворачиваем, чтобы не налезать на подписи часов и строку метрик
     imax, imin = temps.index(tmax), temps.index(tmin)
-    for idx, prefer_above in ((imax, True), (imin, False)):
+    marks = [(imax, True)]
+    if _rnd(tmin) != _rnd(tmax):            # ровные сутки: одна подпись, а не две одинаковые
+        marks.append((imin, False))
+    for idx, prefer_above in marks:
         x, y = pts[idx]
         x = min(max(x, x0 + 22), x1 - 22)
         above = prefer_above if (y0 + 22 < y < y1 - 26) else y > y1 - 26
@@ -414,6 +429,11 @@ def _draw_chart(d: ImageDraw.ImageDraw, hourly: list[dict],
 
 
 # ---------------------------------------------------------------- кадр
+
+def _is_stale(upd: datetime) -> bool:
+    """Обновления давно не проходят — кадр показывает старый прогноз."""
+    return datetime.now(upd.tzinfo) - upd > STALE_AFTER
+
 
 def render_frame(data: dict) -> bytes:
     img = Image.new("RGB", (W, H), WHITE)
@@ -426,6 +446,9 @@ def render_frame(data: dict) -> bytes:
     date_s = L["date"].format(wd=WEEKDAYS[upd.weekday()], day=upd.day,
                               month=L["months"][upd.month - 1])
     d.text((W - MARGIN - 4, 26), date_s, font=_font(24, False), fill=BLACK, anchor="ra")
+    if _is_stale(upd):                      # иначе вчерашний прогноз выглядит текущим
+        d.text((W - MARGIN - 4, 52), L["stale"].format(upd.strftime("%d.%m %H:%M")),
+               font=_font(14), fill=RED, anchor="ra")
 
     # ── ряд: панель «сейчас» + карточки прогноза ──
     row_y0, row_y1 = 70, 286
@@ -460,14 +483,23 @@ def render_frame(data: dict) -> bytes:
 def frame_etag(data: dict) -> str:
     """Хэш содержимого с округлением — рамка перерисовывается только
     при заметных изменениях, а не из-за каждой десятой градуса."""
-    cur = data["current"]
+    cur, daily = data["current"], data["daily"]
+    upd = datetime.fromisoformat(data["updated"])
+    hourly = data.get("hourly") or []
+    # всё, что напечатано на карточке: иначе рамка получит 304 и останется
+    # со старой датой, восходом, направлением ветра или суммой осадков
     key = json.dumps([
         RENDER_VERSION, FRAME_LANG,
-        round(cur["temp"]), round(cur["feels"]), cur["code"], cur["is_day"],
-        round(cur["wind_ms"]), round(cur["humidity"] / 5), cur["pressure_mmhg"],
-        [(dd["code"], round(dd["tmax"]), round(dd["tmin"]),
-          round((dd["precip_prob"] or 0) / 5)) for dd in data["daily"][:4]],
-        [round(h["temp"] * 2) / 2 for h in data.get("hourly") or []],
-        [round(h["prob"] / 10) for h in data.get("hourly") or []],
+        upd.date().isoformat(), _is_stale(upd),
+        _rnd(cur["temp"]), _rnd(cur["feels"]), cur["code"], cur["is_day"],
+        round(cur["wind_ms"]), cur["wind_dir"],
+        round(cur["humidity"] / 5), cur["pressure_mmhg"],
+        daily[0]["sunrise"], daily[0]["sunset"],
+        [(dd["code"], _rnd(dd["tmax"]), _rnd(dd["tmin"]),
+          round((dd["precip_prob"] or 0) / 5), round(dd["precip_mm"] or 0, 1))
+         for dd in daily[:4]],
+        hourly[0]["time"] if hourly else None,      # сдвиг оси часов и полуночи
+        [round(h["temp"] * 2) / 2 for h in hourly],
+        [round(h["prob"] / 10) for h in hourly],
     ])
     return '"' + hashlib.sha256(key.encode()).hexdigest()[:20] + '"'
